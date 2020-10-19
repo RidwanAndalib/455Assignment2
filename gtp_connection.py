@@ -17,9 +17,12 @@ from board_util import (
     PASS,
     MAXSIZE,
     coord_to_point,
+    where1d
 )
 import numpy as np
 import re
+import signal
+from solver import Solver
 
 
 class GtpConnection:
@@ -37,6 +40,7 @@ class GtpConnection:
         self._debug_mode = debug_mode
         self.go_engine = go_engine
         self.board = board
+        self.solver = Solver(self.board)
         self.commands = {
             "protocol_version": self.protocol_version_cmd,
             "quit": self.quit_cmd,
@@ -50,6 +54,8 @@ class GtpConnection:
             "genmove": self.genmove_cmd,
             "list_commands": self.list_commands_cmd,
             "play": self.play_cmd,
+            "solve": self.solve_cmd,
+            "timelimit": self.timelimit_cmd,
             "legal_moves": self.legal_moves_cmd,
             "gogui-rules_game_id": self.gogui_rules_game_id_cmd,
             "gogui-rules_board_size": self.gogui_rules_board_size_cmd,
@@ -60,17 +66,57 @@ class GtpConnection:
             "gogui-analyze_commands": self.gogui_analyze_cmd
         }
 
+
         # used for argument checking
         # values: (required number of arguments,
         #          error message on argnum failure)
         self.argmap = {
             "boardsize": (1, "Usage: boardsize INT"),
+            "timelimit": (1, "Usage: timelimit INT"),
             "komi": (1, "Usage: komi FLOAT"),
             "known_command": (1, "Usage: known_command CMD_NAME"),
             "genmove": (1, "Usage: genmove {w,b}"),
             "play": (2, "Usage: play {b,w} MOVE"),
             "legal_moves": (1, "Usage: legal_moves {w,b}"),
         }
+
+
+    
+    def solve_cmd(self, args):
+        result = self.solver.solve()
+        if result == None:
+            self.respond("unknown")
+            return
+
+        coord = point_to_coord(result[0], self.board.size)
+        formatted = format_point(coord)
+        if result[1] == 1:
+            if self.board.current_player == BLACK:
+                self.respond("b " + formatted)
+            else:
+                self.respond("w " + formatted)
+        elif result[1] == -1:
+            if self.board.current_player == BLACK:
+                self.respond("w")
+            else:
+                self.respond("b")
+        else:
+            self.respond("draw " + formatted)
+
+
+
+    def timelimit_cmd(self, args):
+        try:
+            timelimit = int(args[0])
+            if timelimit < 0 or timelimit > 100:
+                self.respond("Time value is not in range")
+            else:
+                self.solver.timelimit = timelimit
+                self.respond()
+
+        except Exception as e:
+            print(e)
+            self.respond("Time value is not an int")
 
     def write(self, data):
         stdout.write(data)
@@ -249,7 +295,8 @@ class GtpConnection:
             self.respond()
         except Exception as e:
             self.respond("illegal move: {}".format(str(e).replace('\'','')))
-    
+
+
     def genmove_cmd(self, args):
         """
         Generate a move for the color args[0] in {'b', 'w'}, for the game of gomoku.
@@ -261,16 +308,28 @@ class GtpConnection:
         if self.board.get_empty_points().size == 0:
             self.respond("pass")
             return
-        board_color = args[0].lower()
-        color = color_to_int(board_color)
-        move = self.go_engine.get_move(self.board, color)
+        colorLetter = args[0].lower()
+        color = color_to_int(colorLetter)
+
+        self.solver.board = self.solver.board.copy()
+        self.solver.board.current_player = color
+        best = self.solver.solve()
+        self.solver.board = self.board
+
+        move = None
+        if best == None or best[1] == -1:
+            move = GoBoardUtil.generate_random_move(self.board, color)
+        else:
+            move = best[0]
+
         move_coord = point_to_coord(move, self.board.size)
         move_as_string = format_point(move_coord)
         if self.board.is_legal(move, color):
             self.board.play_move(move, color)
-            self.respond(move_as_string.lower())
+            self.respond(move_as_string.upper())
         else:
             self.respond("Illegal move: {}".format(move_as_string))
+
 
     def gogui_rules_game_id_cmd(self, args):
         self.respond("Gomoku")
@@ -338,6 +397,7 @@ class GtpConnection:
                      "pstring/Show Board/gogui-rules_board\n"
                      )
 
+
 def point_to_coord(point, boardsize):
     """
     Transform point given as board array index 
@@ -401,3 +461,14 @@ def color_to_int(c):
         return color_to_int[c]
     except:
         raise KeyError("\"{}\" wrong color".format(c))
+
+
+def isEnd():
+	result = self.board.detect_five_in_a_row()
+        if result == BLACK:
+            self.respond("black")
+        elif result == WHITE:
+            self.respond("white")
+        else:
+            self.respond("unknown")
+

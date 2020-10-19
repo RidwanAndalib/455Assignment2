@@ -1,0 +1,19 @@
+boardsize 5
+play B A1
+play W A3
+play B B1
+play W A4
+play B C1
+play W A5
+play B D1
+play W B3
+play B A2
+play W B4
+play B B2
+play W B5
+play B C2
+play W C3
+play B D2
+
+solve
+#?[]
